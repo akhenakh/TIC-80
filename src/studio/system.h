@@ -160,6 +160,8 @@ typedef struct
     int fftcaptureplaybackdevices;
     const char *fftdevice;
 
+    int socket;
+
     tic_layout keyboardLayout;
 } StudioConfig;
 

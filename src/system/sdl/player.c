@@ -1,39 +1,23 @@
 // MIT License
-
 // Copyright (c) 2017 Vadim Grigoruk @nesbox
-
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
 
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <SDL.h>
 #include <tic80.h>
+#include "control.h"
 
 #if defined(__APPLE__)
 # if MAC_OS_X_VERSION_MIN_REQUIRED < 1060
 #    error SDL for Mac OS X only supports deploying on 10.6 and above.
-# endif /* MAC_OS_X_VERSION_MIN_REQUIRED < 1060 */
+# endif
 #endif
 
 #define TIC80_WINDOW_SCALE 3
 #define TIC80_WINDOW_TITLE "TIC-80"
 #define TIC80_DEFAULT_CART "cart.tic"
+#define TIC80_DEFAULT_CONTROL_PORT 8580
 #define TIC80_EXECUTABLE_NAME "player-sdl"
 
 static struct
@@ -62,7 +46,7 @@ static void audioCallback(void* userdata, u8* stream, s32 len)
 {
     SDL_LockMutex(state.mutex);
     {
-        tic80* tic = userdata;
+        tic80* tic = (tic80*)userdata;
 
         while(len--)
         {
@@ -78,7 +62,7 @@ static void audioCallback(void* userdata, u8* stream, s32 len)
     SDL_UnlockMutex(state.mutex);
 }
 
-s32 runCart(void* cart, s32 size)
+s32 runCart(void* cart, s32 size, int control_port)
 {
     s32 output = 0;
 
@@ -91,7 +75,7 @@ s32 runCart(void* cart, s32 size)
 
     if(!tic)
     {
-        fprintf(stderr, "Failed to load cart data.");
+        fprintf(stderr, "Failed to load cart data.\n");
         output = 1;
     }
     else
@@ -120,6 +104,13 @@ s32 runCart(void* cart, s32 size)
             audioDevice = SDL_OpenAudioDevice(NULL, 0, &want, &audioSpec, 0);
         }
 
+        // Initialize control socket if enabled
+        tic_control* ctrl = NULL;
+        if (control_port > 0)
+        {
+            ctrl = tic_control_create(control_port);
+        }
+
         const u64 Delta = SDL_GetPerformanceFrequency() / TIC80_FRAMERATE;
         u64 nextTick = SDL_GetPerformanceCounter();
 
@@ -137,7 +128,6 @@ s32 runCart(void* cart, s32 size)
                     state.quit = true;
                     break;
                 case SDL_KEYUP:
-                    // Quit when pressing the escape button.
                     if(event.key.keysym.sym == SDLK_ESCAPE)
                     {
                         state.quit = true;
@@ -146,6 +136,7 @@ s32 runCart(void* cart, s32 size)
                 }
             }
 
+            // Read physical keyboard controls
             {
                 input.gamepads.data = 0;
                 const uint8_t* keyboard = SDL_GetKeyboardState(NULL);
@@ -172,6 +163,12 @@ s32 runCart(void* cart, s32 size)
                 }
             }
 
+            // Poll control socket: processes commands, takes screenshots, merges inputs
+            if (ctrl)
+            {
+                tic_control_poll(ctrl, tic, &input, &state.quit);
+            }
+
             SDL_LockMutex(state.mutex);
             {
                 tic80_tick(tic, input, tic_sys_counter_get, tic_sys_freq_get);
@@ -188,7 +185,6 @@ s32 runCart(void* cart, s32 size)
                 SDL_memcpy(pixels, tic->screen, pitch * TIC80_FULLHEIGHT);
                 SDL_UnlockTexture(texture);
 
-                // Render the image in the proper aspect ratio.
                 {
                     s32 windowWidth, windowHeight;
                     SDL_GetWindowSize(window, &windowWidth, &windowHeight);
@@ -214,6 +210,11 @@ s32 runCart(void* cart, s32 size)
             }
         }
 
+        if (ctrl)
+        {
+            tic_control_close(ctrl);
+        }
+
         tic80_delete(tic);
 
         SDL_CloseAudioDevice(audioDevice);
@@ -230,29 +231,57 @@ s32 runCart(void* cart, s32 size)
 s32 main(s32 argc, char **argv)
 {
     const char* executable = argc > 0 ? argv[0] : TIC80_EXECUTABLE_NAME;
-    const char* input = (argc > 1) ? argv[1] : TIC80_DEFAULT_CART;
+    const char* input = NULL;
+    int control_port = 0;
 
-    // Display help message.
-    if(strcmp(input, "--help") == 0 || strcmp(input, "-h") == 0)
+    for (int i = 1; i < argc; i++)
     {
-        printf("Usage: %s <file>\n", executable);
-        return 0;
+        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0)
+        {
+            printf("Usage: %s <cart.tic> [options]\n\n"
+                   "Options:\n"
+                   "  --socket[=<port>]    Enable TCP control socket (default: %d)\n"
+                   "  --port <port>        Set control socket port\n",
+                   executable, TIC80_DEFAULT_CONTROL_PORT);
+            return 0;
+        }
+        else if (strncmp(argv[i], "--socket=", 9) == 0)
+        {
+            control_port = atoi(argv[i] + 9);
+            if (control_port <= 0) control_port = TIC80_DEFAULT_CONTROL_PORT;
+        }
+        else if (strcmp(argv[i], "--socket") == 0 || strcmp(argv[i], "-s") == 0)
+        {
+            if (i + 1 < argc && argv[i + 1][0] != '-')
+                control_port = atoi(argv[++i]);
+            else
+                control_port = TIC80_DEFAULT_CONTROL_PORT;
+        }
+        else if (strcmp(argv[i], "--port") == 0 || strcmp(argv[i], "-p") == 0)
+        {
+            if (i + 1 < argc)
+                control_port = atoi(argv[++i]);
+        }
+        else if (!input && argv[i][0] != '-')
+        {
+            input = argv[i];
+        }
     }
 
-    // Load the given file.
+    if (!input)
+        input = TIC80_DEFAULT_CART;
+
     FILE* file = fopen(input, "rb");
     if(!file)
     {
-        fprintf(stderr, "Error: Could not load %s.\n\nUsage: %s <file>\n", input, argv[0]);
+        fprintf(stderr, "Error: Could not load %s.\n\nUsage: %s <file> [--socket [port]]\n", input, executable);
         return 1;
     }
 
-    // Load the file data.
     fseek(file, 0, SEEK_END);
     s32 size = ftell(file);
     fseek(file, 0, SEEK_SET);
 
-    // Read the data into usable memory.
     void* cart = SDL_malloc(size);
     if(cart) fread(cart, size, 1, file);
     fclose(file);
@@ -262,5 +291,5 @@ s32 main(s32 argc, char **argv)
         return 1;
     }
 
-    return runCart(cart, size);
+    return runCart(cart, size, control_port);
 }

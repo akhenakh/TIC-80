@@ -22,7 +22,7 @@
 
 #include "studio/system.h"
 #include "tools.h"
-
+#include "control.h"
 #include "ext/fft.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -182,6 +182,8 @@ static struct
     {
         bool focus;
     } mouse;
+
+    tic_control*        control;
 
     struct
     {
@@ -1775,6 +1777,16 @@ static void gpuTick()
 
     pollEvents();
 
+    if(platform.control)
+    {
+        bool quit = false;
+        tic_control_poll(platform.control, (tic80*)tic, &platform.input, &quit);
+        if (quit)
+        {
+            studio_exit(platform.studio);
+        }
+    }
+
     if(studio_alive(platform.studio))
     {
 #if defined __EMSCRIPTEN__
@@ -1965,6 +1977,11 @@ static s32 start(s32 argc, char **argv, const char* folder)
 
     platform.studio = studio_create(argc, argv, TIC80_SAMPLERATE, SCREEN_FORMAT, folder, determineMaximumScale(), detect_keyboard_layout());
 
+    if(studio_config(platform.studio)->socket > 0)
+    {
+        platform.control = tic_control_create(studio_config(platform.studio)->socket);
+    }
+
     SCOPE(studio_delete(platform.studio))
     {
         if (studio_config(platform.studio)->cli)
@@ -2048,6 +2065,11 @@ static s32 start(s32 argc, char **argv, const char* folder)
                 if(platform.keyboard.touch.texture.downPixels)
                     SDL_free(platform.keyboard.touch.texture.downPixels);
 #endif
+                if(platform.control)
+                {
+                    tic_control_close(platform.control);
+                    platform.control = NULL;
+                }
 
                 SDL_DestroyWindow(platform.window);
                 SDL_CloseAudioDevice(platform.audio.device);

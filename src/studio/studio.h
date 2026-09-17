@@ -85,6 +85,7 @@
     macro(cmd,          char*,  STRING,     "=<str>",   "run commands in the console")      \
     macro(keepcmd,      int,    BOOLEAN,    "",         "re-execute commands on every run") \
     macro(version,      int,    BOOLEAN,    "",         "print program version")            \
+    macro(socket,       s32,    INTEGER,    "=<int>",   "listen on TCP control socket")     \
     CRT_CMD_PARAM(macro)
 
 #define SHOW_TOOLTIP(STUDIO, FORMAT, ...)   \

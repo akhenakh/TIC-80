@@ -3049,6 +3049,8 @@ Studio* studio_create(s32 argc, char **argv, s32 samplerate, tic80_pixel_color_f
     studio->config->data.soft               |= args.soft;
     studio->config->data.cli                |= args.cli;
 
+    if(args.socket > 0)
+        studio->config->data.socket = args.socket;
 #if defined(BUILD_EDITORS)
     if(args.codeexport)
         studio->bytebattle.exp = strdup(args.codeexport);

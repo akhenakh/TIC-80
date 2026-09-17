@@ -82,7 +82,11 @@ endif()
 
 if(BUILD_SDL AND BUILD_PLAYER AND NOT RPI)
 
-    add_executable(player-sdl WIN32 ${CMAKE_SOURCE_DIR}/src/system/sdl/player.c)
+    add_executable(player-sdl
+        WIN32
+        ${CMAKE_SOURCE_DIR}/src/system/sdl/player.c
+        ${CMAKE_SOURCE_DIR}/src/system/sdl/control.c
+    )
 
     if (FREEBSD)
         target_include_directories(player-sdl PRIVATE ${SYSROOT_PATH}/usr/local/include)
@@ -198,7 +202,10 @@ endif()
 
 if(BUILD_SDL)
 
-    set(TIC80_SRC src/system/sdl/main.c)
+    set(TIC80_SRC
+        src/system/sdl/main.c
+        src/system/sdl/control.c
+    )
 
     if(WIN32)
 
